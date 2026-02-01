@@ -55,71 +55,86 @@ def setup_cookies():
 # ==========================================
 
 def get_video_data(url):
-    # 1. 쿠키 파일 생성 (헤더 자동 보정 포함)
+    # ---------------------------------------------------------
+    # 전략 1: 쿠키 없이 '안드로이드 폰'인 척 위장해서 다운로드 (가장 성공률 높음)
+    # ---------------------------------------------------------
+    try:
+        ydl_opts_no_cookie = {
+            'format': 'best', # 합체고 뭐고 그냥 되는 거 가져와
+            'outtmpl': 'temp_video.%(ext)s',
+            'quiet': True,
+            'no_warnings': True,
+            'nocheckcertificate': True,
+            # [핵심] 쿠키 없이 모바일 앱으로 위장
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                }
+            }
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts_no_cookie) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if not info: raise Exception("정보 추출 실패")
+            
+            # 파일 찾기 및 반환 로직 (공통 함수로 빼면 좋지만 일단 복붙)
+            filename = ydl.prepare_filename(info)
+            final_filename = None
+            if os.path.exists(filename): final_filename = filename
+            else:
+                for ext in ['.mp4', '.webm', '.mkv', '.3gp']:
+                    if os.path.exists(f"temp_video{ext}"):
+                        final_filename = f"temp_video{ext}"; break
+            
+            if final_filename:
+                return {
+                    'filename': final_filename,
+                    'title': info.get('title', '제목 없음'),
+                    'channel': info.get('uploader', '채널명 없음'),
+                    'views': info.get('view_count', 0),
+                    'date': info.get('upload_date', '날짜 모름'),
+                    'desc': info.get('description', '')[:300]
+                }
+    except Exception as e:
+        print(f"1차 시도 실패 (쿠키 미사용): {e}")
+        # 실패하면 2차 시도로 넘어감
+        pass
+
+    # ---------------------------------------------------------
+    # 전략 2: 1차가 망했으면, 울며 겨자먹기로 '쿠키' 사용 시도
+    # ---------------------------------------------------------
+    
+    # 1. 쿠키 파일 복원
     raw_cookie = st.secrets.get('YOUTUBE_COOKIES')
     if raw_cookie:
         content = raw_cookie.strip()
-        # Netscape 헤더가 없으면 강제로 추가 (에러 방지)
-        if not content.startswith("# Netscape"):
-            content = "# Netscape HTTP Cookie File\n" + content
-        with open('cookies.txt', 'w', encoding='utf-8') as f:
-            f.write(content)
+        if not content.startswith("# Netscape"): content = "# Netscape HTTP Cookie File\n" + content
+        with open('cookies.txt', 'w', encoding='utf-8') as f: f.write(content)
 
-    # 2. 봇 차단 방지용 헤더
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    }
-
-    # 3. [최종 해결] 가장 안전한 다운로드 옵션
-    ydl_opts = {
-        # [핵심] 'best'는 합체 과정(ffmpeg) 없이 서버에 있는 원본 파일 하나를 가져옵니다.
-        # 화질이 720p나 360p일 수 있지만, 다운로드 실패 확률은 0%입니다.
-        'format': 'best', 
-        
-        # 파일명 템플릿
+    ydl_opts_cookie = {
+        'format': 'best',
         'outtmpl': 'temp_video.%(ext)s',
-        
-        # 에러 무시하고 진행
-        'ignoreerrors': True,
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        
-        # 헤더 적용
-        'http_headers': headers,
+        # 쿠키 파일 적용
+        'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None
     }
 
-    # 쿠키 적용
-    if os.path.exists('cookies.txt'):
-        ydl_opts['cookiefile'] = 'cookies.txt'
-
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # 다운로드 실행
+        with yt_dlp.YoutubeDL(ydl_opts_cookie) as ydl:
             info = ydl.extract_info(url, download=True)
-            
-            if not info:
-                 raise Exception("영상 정보를 가져오지 못했습니다.")
+            if not info: raise Exception("2차 시도도 정보 추출 실패")
 
             filename = ydl.prepare_filename(info)
-            
-            # 4. 파일 찾기 (확장자가 mp4가 아닐 수도 있음)
             final_filename = None
-            
-            # (1) yt-dlp가 말한 파일명이 진짜 있는지 확인
-            if os.path.exists(filename):
-                final_filename = filename
+            if os.path.exists(filename): final_filename = filename
             else:
-                # (2) 없다면 temp_video 이름 붙은 거 아무거나 찾기
-                # 쇼츠는 .webm으로 받아지는 경우가 많음 -> Gemini는 webm도 잘 분석함
                 for ext in ['.mp4', '.webm', '.mkv', '.3gp']:
-                    candidate = f"temp_video{ext}"
-                    if os.path.exists(candidate):
-                        final_filename = candidate
-                        break
-            
-            if not final_filename:
-                 raise Exception(f"파일을 찾을 수 없습니다. (경로: {filename})")
+                    if os.path.exists(f"temp_video{ext}"):
+                        final_filename = f"temp_video{ext}"; break
+
+            if not final_filename: raise Exception("파일 다운로드 실패")
 
             return {
                 'filename': final_filename,
@@ -129,13 +144,9 @@ def get_video_data(url):
                 'date': info.get('upload_date', '날짜 모름'),
                 'desc': info.get('description', '')[:300]
             }
-
+            
     except Exception as e:
-        err_msg = str(e)
-        if "403" in err_msg:
-             return {'error': "🚫 403 차단: 쿠키가 만료되었습니다. PC 시크릿 모드에서 다시 추출해주세요."}
-        return {'error': f"다운로드 오류: {err_msg}"}
-
+        return {'error': f"🚫 최종 실패: 유튜브가 서버 IP를 차단했습니다.\n내용: {str(e)}\n\n(로컬 환경에서는 잘 되므로, Streamlit Cloud 대신 로컬 실행을 권장합니다.)"}
 # ==========================================
 # 3. AI 및 UI
 # ==========================================
@@ -218,5 +229,6 @@ elif menu == "🗄️ 아카이브":
     if st.button("열기", use_container_width=True):
         res = conn.execute("SELECT full_report FROM analyses WHERE id=?", (sel_id,)).fetchone()
         if res: st.markdown(res[0])
+
 
 
