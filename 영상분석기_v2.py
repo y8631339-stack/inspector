@@ -80,19 +80,18 @@ def save_api_key(key):
 
 def get_video_data(url):
     """
-    yt-dlp 개선판:
-    1. 쿠키 자동 적용 (403 해결)
-    2. 포맷 제약 해제 (Format not available 해결 -> 'best' 사용)
+    [수정됨] 포맷 제약 해제 버전
+    - MP4 강제 설정을 제거하고 'best' 옵션 사용
+    - WebM, MKV 등 어떤 형식이든 다운로드하여 분석 가능하게 함
     """
-    # 1. 기본 설정
     ydl_opts = {
-        # [수정됨] 무조건 mp4를 고집하지 않고, 다운로드 가능한 '최고 화질'을 선택
+        # [핵심 수정] 'best[ext=mp4]' -> 'best'로 변경 (형식 무관 최상위 화질)
         'format': 'best', 
         'outtmpl': 'temp_video.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        # 브라우저 위장 (403 방지)
+        # 403 차단 방지용 헤더
         'extractor_args': {
             'youtube': {
                 'player_client': ['web', 'android', 'ios'],
@@ -100,28 +99,35 @@ def get_video_data(url):
         }
     }
 
-    # 2. 쿠키 파일 적용 (있으면 사용)
+    # 쿠키 파일 적용 (있으면 사용)
     if os.path.exists('cookies.txt'):
         ydl_opts['cookiefile'] = 'cookies.txt'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # 다운로드
+            # 다운로드 실행
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # 파일명 보정 (확장자 유연하게 찾기)
-            # yt-dlp가 .webm이나 .mkv로 받았을 경우를 대비해 실제 파일을 찾습니다.
+            # [중요] 다운로드된 파일의 실제 확장자 찾기
+            # (요청은 temp_video.mp4로 했어도 실제로는 .webm이나 .mkv로 저장될 수 있음)
             if not os.path.exists(filename):
-                base, _ = os.path.splitext(filename)
-                for ext in ['.mp4', '.mkv', '.webm', '.3gp']:
-                    if os.path.exists(base + ext):
-                        filename = base + ext
+                base_name = os.path.splitext(filename)[0] # 확장자 제거한 이름
+                # 가능한 모든 확장자 스캔
+                for ext in ['.mp4', '.mkv', '.webm', '.3gp', '.mov']:
+                    candidate = base_name + ext
+                    # temp_video.webm 처럼 템플릿 이름으로 저장된 경우 확인
+                    if os.path.exists(candidate):
+                        filename = candidate
                         break
-            
-            # 검증
+                    # 혹은 yt-dlp가 원본 파일명을 썼을 수도 있으니 확인
+                    if os.path.exists('temp_video' + ext):
+                        filename = 'temp_video' + ext
+                        break
+
+            # 파일 검증
             if not os.path.exists(filename) or os.path.getsize(filename) == 0:
-                 raise Exception("파일이 다운로드되지 않았습니다. (쿠키 파일 확인 필요)")
+                 raise Exception("파일을 찾을 수 없습니다. (포맷 호환성 또는 차단 문제)")
 
             meta_data = {
                 'filename': filename,
@@ -134,11 +140,7 @@ def get_video_data(url):
             return meta_data
 
     except Exception as e:
-        err_msg = str(e)
-        if "Sign in" in err_msg or "403" in err_msg:
-             return {'error': "🚫 유튜브 접근 차단됨 (cookies.txt 필요)"}
-        return {'error': f"다운로드 오류: {err_msg}"}
-
+        return {'error': f"다운로드 오류: {str(e)}"}
 def upload_to_gemini(path):
     try:
         video_file = genai.upload_file(path=path)
@@ -419,5 +421,6 @@ elif menu == "📈 인사이트 & 대본":
                         
                     except Exception as e:
                         st.error(f"오류 발생: {e}")
+
 
 
