@@ -78,28 +78,46 @@ def save_api_key(key):
 # ==========================================
 
 def get_video_data(url):
+    """
+    yt-dlp 개선판: 쿠키 지원 및 강력한 차단 우회 기능 포함
+    """
+    # 1. 기본 설정
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'outtmpl': 'temp_video.%(ext)s',
         'quiet': True,
         'no_warnings': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        'merge_output_format': 'mp4',
+        # 중요: 403 에러 방지를 위한 클라이언트 위장 (iOS가 현재 가장 안정적)
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android', 'web'],
+                'player_skip': ['webpage', 'configs', 'js'],
+            }
+        },
+        'nocheckcertificate': True,
     }
-    
+
+    # 2. 쿠키 파일이 폴더에 있다면 자동으로 적용 (치트키)
+    if os.path.exists('cookies.txt'):
+        ydl_opts['cookiefile'] = 'cookies.txt'
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # 파일명 보정 로직
+            # 파일명 보정 (확장자 매칭)
             if not os.path.exists(filename):
                 base, _ = os.path.splitext(filename)
-                for ext in ['.mkv', '.webm', '.mp4']:
+                for ext in ['.mp4', '.mkv', '.webm']:
                     if os.path.exists(base + ext):
                         filename = base + ext
                         break
             
+            # 파일 크기 체크 (0바이트면 차단된 것)
+            if os.path.exists(filename) and os.path.getsize(filename) == 0:
+                 raise Exception("다운로드된 파일이 빕니다. (403 차단됨 -> cookies.txt 필요)")
+
             meta_data = {
                 'filename': filename,
                 'title': info.get('title', 'Unknown'),
@@ -109,18 +127,13 @@ def get_video_data(url):
                 'desc': info.get('description', '')[:300]
             }
             return meta_data
-    except Exception as e:
-        return {'error': str(e)}
 
-def upload_to_gemini(path):
-    try:
-        video_file = genai.upload_file(path=path)
-        while video_file.state.name == "PROCESSING":
-            time.sleep(1)
-            video_file = genai.get_file(video_file.name)
-        if video_file.state.name == "FAILED": raise ValueError("처리 실패")
-        return video_file
-    except Exception as e: raise e
+    except Exception as e:
+        # 에러 메시지에 힌트 추가
+        error_msg = str(e)
+        if "403" in error_msg or "Forbidden" in error_msg:
+            return {'error': "🚫 유튜브가 접속을 차단했습니다. (해결책: 폴더에 cookies.txt 파일을 넣어주세요)"}
+        return {'error': f"다운로드 실패: {error_msg}"}
 
 # ==========================================
 # 3. AI 분석 엔진
