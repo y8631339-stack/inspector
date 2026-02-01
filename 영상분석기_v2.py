@@ -80,25 +80,29 @@ def get_video_data(url):
     # 쿠키 생성
     setup_cookies()
     
-    # [수정 1] 헤더 추가: 봇이 아니라 일반 크롬 브라우저인 척 위장
+    # 봇 차단 방지용 헤더
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
     }
 
     ydl_opts = {
-        # [수정 2] 에러가 가장 적은 '단일 파일(mp4)' 우선 포맷
-        'format': 'best[ext=mp4]/best', 
-        'outtmpl': 'temp_video.%(ext)s',
+        # [핵심 수정] mp4 강제 제거 -> 확장자 상관없이 '최고 화질' 선택
+        # "합쳐진 파일(best)"이 없으면 "따로 받아서 합치기(bestvideo+bestaudio)" 시도
+        'format': 'best/bestvideo+bestaudio', 
+        
+        # 합쳐야 할 경우(ffmpeg 사용 시) 최종 결과물만 mp4로 변환 (선택 사항)
+        # 만약 ffmpeg가 꼬였다면 이 옵션은 무시되고 원본 확장자(webm 등)로 받아집니다.
+        'merge_output_format': 'mp4',
+        
+        'outtmpl': 'temp_video.%(ext)s', # 파일명 고정
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        
-        # [핵심] 위장용 헤더 적용
         'http_headers': headers,
     }
 
-    # 쿠키 파일이 있으면 적용
+    # 쿠키 파일 적용
     if os.path.exists('cookies.txt'):
         ydl_opts['cookiefile'] = 'cookies.txt'
 
@@ -108,22 +112,30 @@ def get_video_data(url):
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # 파일 이름 찾기 (확장자 유연성 확보)
-            if not os.path.exists(filename):
-                base, _ = os.path.splitext(filename)
-                for ext in ['.mp4', '.mkv', '.webm', '.3gp']:
-                    if os.path.exists(base + ext):
-                        filename = base + ext
-                        break
-                    if os.path.exists("temp_video" + ext):
-                        filename = "temp_video" + ext
+            # [수정] 파일 찾기 로직 강화 (webm, mkv 등 모든 확장자 탐색)
+            final_filename = None
+            
+            # 1. yt-dlp가 예고한 파일명이 실제로 있는지 확인
+            if os.path.exists(filename):
+                final_filename = filename
+            
+            # 2. 없다면 temp_video.* 패턴으로 검색 (확장자가 바뀌었을 경우 대비)
+            else:
+                base_name = os.path.splitext('temp_video')[0] # 그냥 'temp_video'
+                possible_exts = ['.mp4', '.webm', '.mkv', '.3gp', '.m4a']
+                
+                for ext in possible_exts:
+                    # temp_video.mp4, temp_video.webm 등 확인
+                    candidate = f"temp_video{ext}" 
+                    if os.path.exists(candidate):
+                        final_filename = candidate
                         break
 
-            if not os.path.exists(filename) or os.path.getsize(filename) == 0:
-                 raise Exception("파일 다운로드 실패 (0byte)")
+            if not final_filename or os.path.getsize(final_filename) == 0:
+                 raise Exception(f"파일을 찾을 수 없습니다. (예상 파일명: {filename})")
 
             meta_data = {
-                'filename': filename,
+                'filename': final_filename,
                 'title': info.get('title', 'Unknown Title'),
                 'channel': info.get('uploader', 'Unknown Channel'),
                 'views': info.get('view_count', 0),
@@ -134,20 +146,9 @@ def get_video_data(url):
 
     except Exception as e:
         err_msg = str(e)
-        # 403 에러가 발생하면 사용자에게 명확한 메시지 전달
         if "403" in err_msg or "Sign in" in err_msg:
-             return {'error': "🚫 403 차단: 쿠키가 만료되었습니다.\n[해결] 1.시크릿창 로그인 -> 2.쿠키 재추출 -> 3.로그아웃 없이 창 닫기 -> 4.Secrets 업데이트"}
+             return {'error': "🚫 403 차단: 쿠키 만료. 시크릿 모드에서 재추출 필요."}
         return {'error': f"다운로드 오류: {err_msg}"}
-def upload_to_gemini(path):
-    try:
-        video_file = genai.upload_file(path=path)
-        while video_file.state.name == "PROCESSING":
-            time.sleep(1)
-            video_file = genai.get_file(video_file.name)
-        if video_file.state.name == "FAILED": raise ValueError("Gemini 처리 실패")
-        return video_file
-    except Exception as e: raise e
-
 # ==========================================
 # 5. AI 분석 및 UI
 # ==========================================
@@ -269,6 +270,7 @@ elif menu == "📈 인사이트":
                 genai.configure(api_key=api_key_input)
                 res = genai.GenerativeModel('gemini-2.5-flash').generate_content(f"주제:{topic}\n요청:{req}\n참고:{ref}\n쇼츠 대본 작성.")
                 st.markdown(res.text)
+
 
 
 
