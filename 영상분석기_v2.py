@@ -79,16 +79,17 @@ def setup_cookies():
 def get_video_data(url):
     # 쿠키 생성
     setup_cookies()
-    
     ydl_opts = {
-        'format': 'best', # 화질 선택
+        # [수정] 'best' 대신 비디오+오디오 결합 허용
+        'format': 'bestvideo+bestaudio/best', 
+        'merge_output_format': 'mp4', # 최종 결과물을 mp4로 고정
+        
         'outtmpl': 'temp_video.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         
         # [핵심 수정] PC가 아닌 '안드로이드 앱'으로 완벽 위장
-        # 모바일 API는 IP 주소가 바뀌어도 차단을 잘 안 합니다.
         'extractor_args': {
             'youtube': {
                 'player_client': ['android'],
@@ -267,4 +268,5 @@ elif menu == "📈 인사이트":
                 genai.configure(api_key=api_key_input)
                 res = genai.GenerativeModel('gemini-2.5-flash').generate_content(f"주제:{topic}\n요청:{req}\n참고:{ref}\n쇼츠 대본 작성.")
                 st.markdown(res.text)
+
 
