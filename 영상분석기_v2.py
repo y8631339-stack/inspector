@@ -58,32 +58,73 @@ conn = init_db()
 # 3. [핵심] Base64 쿠키 복원 시스템
 # ==========================================
 
+정말 고생이 많으십니다. 이 오류(does not look like a Netscape format cookies file)가 계속 뜨는 이유는 딱 하나입니다.
+
+**"서버가 받은 파일의 '첫 번째 줄'이 # Netscape HTTP Cookie File이라는 문장으로 시작하지 않기 때문"**입니다.
+
+Base64로 변환하고 복호화하는 과정에서 **이 헤더(Header) 부분이 누락되었거나, 숨겨진 공백 문자가 들어갔을 확률이 100%**입니다.
+
+제가 코드로 강제로 헤더를 심어주고, **파일 상태를 눈으로 확인할 수 있는 '진단 기능'**을 넣어서 해결해 드리겠습니다.
+
+✅ 해결책: app.py의 setup_cookies 함수 교체
+app.py 파일의 setup_cookies 함수를 아래 코드로 완벽하게 교체해주세요.
+
+이 코드는 쿠키 파일이 어떻게 생겼는지 화면에 직접 보여주고(디버깅), 헤더가 없으면 **강제로 주입(Fix)**합니다.
+
+Python
 def setup_cookies():
     """
-    Streamlit Secrets에 저장된 Base64 문자열을 디코딩하여
-    서버에 완벽한 포맷의 cookies.txt 파일을 생성합니다.
+    [강력한 수정 버전]
+    1. Base64 디코딩
+    2. 헤더(# Netscape...) 강제 주입
+    3. 파일 상태를 화면에 출력하여 진단
     """
     cookie_filename = 'cookies.txt'
     
-    # 이미 파일이 있으면 생성하지 않음
-    if os.path.exists(cookie_filename):
-        return
-        
-    # Secrets에서 Base64 문자열 가져오기
+    # Secrets에서 가져오기
     b64_cookie = st.secrets.get('YOUTUBE_COOKIES_B64')
     
-    if b64_cookie:
-        try:
-            # Base64 디코딩 후 파일로 저장
-            decoded_bytes = base64.b64decode(b64_cookie)
-            with open(cookie_filename, 'wb') as f:
-                f.write(decoded_bytes)
-            # print("✅ 쿠키 파일 복원 성공!") # 디버깅용
-        except Exception as e:
-            st.error(f"🍪 쿠키 복원 실패: {e}")
-    else:
-        # Secrets가 없을 경우 경고 (로컬 실행 시 무시 가능)
-        pass
+    if not b64_cookie:
+        st.error("❌ Secrets에 'YOUTUBE_COOKIES_B64' 키가 없습니다.")
+        return
+
+    try:
+        # 1. 디코딩 (공백 제거 후 시도)
+        decoded_bytes = base64.b64decode(b64_cookie.strip())
+        content = decoded_bytes.decode('utf-8', errors='ignore')
+
+        # 2. [핵심] 헤더 검사 및 강제 주입
+        # yt-dlp는 첫 줄이 # Netscape HTTP Cookie File 로 시작하지 않으면 에러를 냅니다.
+        if "# Netscape HTTP Cookie File" not in content:
+            # 기존 내용 앞에 강제로 헤더를 붙입니다.
+            content = "# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_file.html\n" + content
+            st.warning("⚠️ 쿠키 파일에 헤더가 없어서 강제로 추가했습니다.")
+
+        # 3. 빈 줄 정리 (상단 공백 제거)
+        lines = content.split('\n')
+        # 첫 줄이 헤더가 되도록 공백 라인 제거
+        cleaned_lines = [line for line in lines if line.strip()]
+        
+        # 다시 합치기
+        final_content = '\n'.join(cleaned_lines)
+        
+        # 4. 파일 저장
+        with open(cookie_filename, 'w', encoding='utf-8') as f:
+            f.write(final_content)
+            
+        # ====================================================
+        # 🔍 [진단용] 화면에 쿠키 파일 앞부분 출력 (디버깅)
+        # 문제가 해결되면 이 부분은 주석 처리하셔도 됩니다.
+        st.toast("쿠키 파일 생성 완료!", icon="🍪")
+        with st.expander("🔍 생성된 쿠키 파일 미리보기 (상위 5줄)"):
+            st.code("\n".join(cleaned_lines[:5]), language='text')
+            if not final_content.startswith("# Netscape"):
+                 st.error("🚨 여전히 헤더가 잘못되었습니다. 위 미리보기를 확인하세요.")
+        # ====================================================
+
+    except Exception as e:
+        st.error(f"🍪 쿠키 복원 실패: {e}")
+        st.error("Base64 문자열이 올바르게 복사되지 않았을 수 있습니다.")
 
 # ==========================================
 # 4. 영상 다운로드 (쿠키 적용)
@@ -271,3 +312,4 @@ elif menu == "📈 인사이트":
                 genai.configure(api_key=api_key_input)
                 res = genai.GenerativeModel('gemini-2.5-flash').generate_content(f"주제:{topic}\n요청:{req}\n참고:{ref}\n쇼츠 대본 작성.")
                 st.markdown(res.text)
+
