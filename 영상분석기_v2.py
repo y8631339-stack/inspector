@@ -12,14 +12,12 @@ import yt_dlp
 # 1. 설정 및 UI 초기화
 # ==========================================
 
-st.set_page_config(layout="wide", page_title="Viral Shorts Master V5", page_icon="📱")
+st.set_page_config(layout="wide", page_title="Viral Shorts Master Cloud", page_icon="☁️")
 
-# 모바일 친화적 CSS 및 스타일링
 st.markdown("""
 <style>
     .report-box { border: 1px solid #ddd; padding: 15px; border-radius: 10px; background-color: #f8f9fa; margin-bottom: 15px; }
     .stButton > button { min-height: 48px; font-weight: bold; border-radius: 8px; }
-    .meta-tag { background-color: #eee; padding: 4px 8px; border-radius: 5px; font-size: 0.85em; margin-right: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -30,8 +28,6 @@ st.markdown("""
 def init_db():
     conn = sqlite3.connect('viral_shorts.db', check_same_thread=False)
     c = conn.cursor()
-    
-    # 1) 영상 분석 데이터 테이블
     c.execute('''
         CREATE TABLE IF NOT EXISTS analyses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,8 +40,6 @@ def init_db():
             created_at TIMESTAMP
         )
     ''')
-    
-    # 2) 인사이트(트렌드) 데이터 테이블
     c.execute('''
         CREATE TABLE IF NOT EXISTS insights (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,44 +48,51 @@ def init_db():
             created_at TIMESTAMP
         )
     ''')
-    
     conn.commit()
     return conn
 
 conn = init_db()
-CONFIG_FILE = 'secrets.json'
-
-def load_api_key():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r') as f:
-                return json.load(f).get('api_key', '')
-        except:
-            return ''
-    return ''
-
-def save_api_key(key):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump({'api_key': key}, f)
 
 # ==========================================
-# 3. 영상 다운로드 및 처리 (403 우회 기능 포함)
+# 3. [핵심] Streamlit Secrets에서 쿠키 생성
+# ==========================================
+
+def setup_cookies():
+    """
+    Streamlit Secrets에 저장된 쿠키 텍스트를 읽어
+    임시 cookies.txt 파일을 생성합니다.
+    """
+    cookie_file = 'cookies.txt'
+    
+    # 이미 파일이 있으면 패스
+    if os.path.exists(cookie_file):
+        return cookie_file
+        
+    # Secrets에 쿠키 데이터가 있는지 확인
+    if 'YOUTUBE_COOKIES' in st.secrets:
+        try:
+            with open(cookie_file, 'w', encoding='utf-8') as f:
+                f.write(st.secrets['YOUTUBE_COOKIES'])
+            return cookie_file
+        except Exception as e:
+            st.error(f"쿠키 파일 생성 중 오류: {e}")
+            return None
+    return None
+
+# ==========================================
+# 4. 영상 다운로드 (Cloud 환경 최적화)
 # ==========================================
 
 def get_video_data(url):
-    """
-    [수정됨] 포맷 제약 해제 버전
-    - MP4 강제 설정을 제거하고 'best' 옵션 사용
-    - WebM, MKV 등 어떤 형식이든 다운로드하여 분석 가능하게 함
-    """
+    # 1. 쿠키 파일 셋팅
+    setup_cookies()
+    
     ydl_opts = {
-        # [핵심 수정] 'best[ext=mp4]' -> 'best'로 변경 (형식 무관 최상위 화질)
-        'format': 'best', 
+        'format': 'best',
         'outtmpl': 'temp_video.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        # 403 차단 방지용 헤더
         'extractor_args': {
             'youtube': {
                 'player_client': ['web', 'android', 'ios'],
@@ -99,35 +100,30 @@ def get_video_data(url):
         }
     }
 
-    # 쿠키 파일 적용 (있으면 사용)
+    # 쿠키 파일이 생성되었다면 적용
     if os.path.exists('cookies.txt'):
         ydl_opts['cookiefile'] = 'cookies.txt'
+    else:
+        print("⚠️ Warning: 쿠키 파일이 없습니다. (Secrets 설정을 확인하세요)")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # 다운로드 실행
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # [중요] 다운로드된 파일의 실제 확장자 찾기
-            # (요청은 temp_video.mp4로 했어도 실제로는 .webm이나 .mkv로 저장될 수 있음)
+            # 확장자 유연하게 찾기
             if not os.path.exists(filename):
-                base_name = os.path.splitext(filename)[0] # 확장자 제거한 이름
-                # 가능한 모든 확장자 스캔
-                for ext in ['.mp4', '.mkv', '.webm', '.3gp', '.mov']:
-                    candidate = base_name + ext
-                    # temp_video.webm 처럼 템플릿 이름으로 저장된 경우 확인
-                    if os.path.exists(candidate):
-                        filename = candidate
+                base, _ = os.path.splitext(filename)
+                for ext in ['.mp4', '.mkv', '.webm', '.3gp']:
+                    if os.path.exists(base + ext):
+                        filename = base + ext
                         break
-                    # 혹은 yt-dlp가 원본 파일명을 썼을 수도 있으니 확인
-                    if os.path.exists('temp_video' + ext):
-                        filename = 'temp_video' + ext
+                    if os.path.exists("temp_video" + ext):
+                        filename = "temp_video" + ext
                         break
 
-            # 파일 검증
             if not os.path.exists(filename) or os.path.getsize(filename) == 0:
-                 raise Exception("파일을 찾을 수 없습니다. (포맷 호환성 또는 차단 문제)")
+                 raise Exception("다운로드 실패 (파일 없음)")
 
             meta_data = {
                 'filename': filename,
@@ -140,287 +136,151 @@ def get_video_data(url):
             return meta_data
 
     except Exception as e:
-        return {'error': f"다운로드 오류: {str(e)}"}
+        err_msg = str(e)
+        if "403" in err_msg or "Sign in" in err_msg:
+            return {'error': "🚫 403 Forbidden: Streamlit Secrets에 쿠키를 등록해주세요."}
+        return {'error': f"다운로드 오류: {err_msg}"}
+
 def upload_to_gemini(path):
     try:
         video_file = genai.upload_file(path=path)
-        # 처리 대기
         while video_file.state.name == "PROCESSING":
             time.sleep(1)
             video_file = genai.get_file(video_file.name)
-        
         if video_file.state.name == "FAILED":
-            raise ValueError("Gemini 서버에서 비디오 처리에 실패했습니다.")
+             raise ValueError("Gemini 처리 실패")
         return video_file
     except Exception as e:
         raise e
 
 # ==========================================
-# 4. AI 분석 엔진
+# 5. AI 분석 엔진
 # ==========================================
 
 def analyze_video_with_meta(api_key, video_path, meta_data):
     genai.configure(api_key=api_key)
-    # 2.5 버전 사용 (사용 불가능 시 'gemini-1.5-flash'로 변경)
-    model = genai.GenerativeModel('gemini-2.5-flash') 
+    model = genai.GenerativeModel('gemini-2.5-flash')
     
     video_file = upload_to_gemini(video_path)
     
     prompt = f"""
-    이 유튜브 쇼츠 영상을 심층 분석해줘.
-    [메타데이터]
-    - 제목: {meta_data['title']}
-    - 채널: {meta_data['channel']}
-    - 조회수: {meta_data['views']}
+    이 유튜브 쇼츠 영상을 분석해줘.
+    [메타정보] 제목: {meta_data['title']}, 채널: {meta_data['channel']}, 조회수: {meta_data['views']}
     
-    반드시 아래 포맷으로 작성해줘:
-    
-    ## 🕵️‍♂️ [{meta_data['title']}] 심층 분석
-    
-    ### 1. 📍 소스 및 데이터 분석
-    * **핵심 내용:** (영상 내용 요약)
-    * **데이터 인사이트:** (조회수나 반응을 통해 본 인기 요인)
-
-    ### 2. 🛠️ 제작 및 편집 방식
-    * **구성:** [도입] ~ [전개] ~ [결말]
-    * **편집:** (자막 스타일, BGM, 컷 전환 속도 등)
-
-    ### 3. 🔥 흥행 성공 요인
-    * **Hook (초반 3초):** (시청 이탈을 막은 요소)
-    * **Dopamine Hit:** (시청자가 느낀 감정적 보상)
-    * **Viral Point:** (댓글 참여 유도 포인트)
-
-    ### 4. 🚀 벤치마킹 실행 가이드
-    * **검색 키워드:** (유사 소재 발굴용)
-    * **적용 팁:** (내 채널에 적용 시 주의사항)
+    아래 양식으로 작성:
+    ## 🕵️‍♂️ [{meta_data['title']}] 분석
+    ### 1. 📍 핵심 및 데이터
+    * 내용: (요약)
+    * 데이터 추론: (메타데이터 기반 인기 요인)
+    ### 2. 🛠️ 제작 방식
+    * 구성: [도입]~[결말]
+    * 편집: (자막/컷/사운드)
+    ### 3. 🔥 흥행 요인
+    * Hook: (초반 요소)
+    * Viral Point: (댓글 유도)
+    ### 4. 🚀 벤치마킹
+    * 적용 포인트: (내 채널 적용법)
     """
-    
     response = model.generate_content([video_file, prompt])
-    
-    # 클라우드 파일 삭제 (비용 절감 및 정리)
-    try:
-        genai.delete_file(video_file.name)
-    except:
-        pass
-        
+    try: genai.delete_file(video_file.name)
+    except: pass
     return response.text
 
 # ==========================================
-# 5. UI 구성 (사이드바 & 메인)
+# 6. UI 구성
 # ==========================================
 
 with st.sidebar:
-    st.header("⚙️ 설정 & 메뉴")
+    st.header("⚙️ 설정")
+    # API 키도 Secrets에서 가져오거나 직접 입력
+    default_key = st.secrets.get("GEMINI_API_KEY", "")
+    api_key_input = st.text_input("Gemini API Key", value=default_key, type="password")
     
-    # API 키 자동 로드
-    saved_key = load_api_key()
-    api_key_input = st.text_input("Gemini API Key", value=saved_key, type="password")
-    
-    if st.button("💾 API 키 저장", use_container_width=True):
-        save_api_key(api_key_input)
-        st.success("API 키가 저장되었습니다.")
-        time.sleep(0.5)
-        st.rerun()
-    
-    st.markdown("---")
-    menu = st.radio("메뉴 선택", ["🆕 영상 분석", "🗄️ 분석 아카이브", "📈 인사이트 & 대본"])
+    st.divider()
+    menu = st.radio("메뉴", ["🆕 영상 분석", "🗄️ 아카이브", "📈 인사이트"])
 
-# --- [탭 1] 영상 분석 ---
+# [탭 1] 영상 분석
 if menu == "🆕 영상 분석":
-    st.title("🎬 영상 심층 분석")
-    st.caption("URL을 입력하면 다운로드 후 AI가 분석합니다.")
+    st.title("🎬 클라우드 영상 분석기")
     
-    url = st.text_input("유튜브 쇼츠 URL 입력", placeholder="https://youtube.com/shorts/...")
+    # 쿠키 상태 확인 (디버깅용)
+    if 'YOUTUBE_COOKIES' in st.secrets:
+        st.success("✅ 쿠키 설정이 감지되었습니다. (보안 접속 가능)")
+    else:
+        st.warning("⚠️ 쿠키 설정이 없습니다. Streamlit Secrets에 'YOUTUBE_COOKIES'를 등록해주세요.")
+        
+    url = st.text_input("쇼츠 URL 입력")
     
     if st.button("🚀 분석 시작", use_container_width=True):
         if not url or not api_key_input:
-            st.warning("URL과 API 키를 확인해주세요.")
+            st.error("URL과 API 키 필요")
         else:
-            # 진행 상태 표시줄
-            status = st.status("🕵️‍♂️ 분석 프로세스 시작...", expanded=True)
-            
+            status = st.status("🕵️‍♂️ 작업 진행 중...", expanded=True)
             try:
-                # 1. 다운로드
-                status.write("📥 1/3 영상 다운로드 및 메타데이터 수집 중...")
+                status.write("📥 다운로드 중... (쿠키 적용)")
                 data = get_video_data(url)
                 
                 if 'error' in data:
-                    status.update(label="❌ 오류 발생", state="error")
                     st.error(data['error'])
+                    status.update(label="실패", state="error")
                 else:
-                    # 2. AI 분석
-                    status.write("👀 2/3 AI가 영상을 시청하고 보고서를 작성 중...")
+                    status.write("👀 AI 분석 중...")
                     report = analyze_video_with_meta(api_key_input, data['filename'], data)
                     
-                    # 3. DB 저장
-                    status.write("💾 3/3 데이터베이스에 저장 중...")
                     c = conn.cursor()
-                    c.execute("""
-                        INSERT INTO analyses (url, title, channel, views, publish_date, full_report, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (url, data['title'], data['channel'], data['views'], data['date'], report, datetime.now()))
+                    c.execute("INSERT INTO analyses (url, title, channel, views, publish_date, full_report, created_at) VALUES (?,?,?,?,?,?,?)",
+                             (url, data['title'], data['channel'], data['views'], data['date'], report, datetime.now()))
                     conn.commit()
                     
-                    # 임시 파일 정리
-                    if os.path.exists(data['filename']):
-                        os.remove(data['filename'])
-                        
-                    status.update(label="✅ 분석 완료!", state="complete", expanded=False)
+                    if os.path.exists(data['filename']): os.remove(data['filename'])
+                    status.update(label="완료!", state="complete", expanded=False)
                     
-                    # 결과 출력
-                    st.divider()
-                    st.subheader(f"📺 {data['title']}")
-                    st.caption(f"채널: {data['channel']} | 조회수: {data['views']:,}회 | 게시일: {data['date']}")
                     st.markdown(report)
-                    
             except Exception as e:
-                status.update(label="❌ 시스템 오류", state="error")
-                st.error(f"예기치 못한 오류: {str(e)}")
-                # 파일 정리 시도
-                if 'data' in locals() and 'filename' in data and os.path.exists(data['filename']):
-                    os.remove(data['filename'])
+                st.error(str(e))
 
-# --- [탭 2] 아카이브 ---
-elif menu == "🗄️ 분석 아카이브":
-    st.title("🗄️ 분석 기록 보관소")
-    
-    # DB 조회
-    try:
-        df = pd.read_sql_query("SELECT id, title, channel, views, created_at FROM analyses ORDER BY id DESC", conn)
-        
-        if df.empty:
-            st.info("저장된 데이터가 없습니다.")
-        else:
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                selected_id = st.number_input("조회할 ID 입력", min_value=0, step=1)
-            with col2:
-                if st.button("📄 리포트 열기", use_container_width=True):
-                    res = conn.execute("SELECT full_report FROM analyses WHERE id=?", (selected_id,)).fetchone()
-                    if res:
-                        st.markdown("---")
-                        st.markdown(res[0])
-                    else:
-                        st.warning("해당 ID의 리포트가 없습니다.")
-    except Exception as e:
-        st.error(f"DB 오류: {e}")
+# [탭 2] 아카이브
+elif menu == "🗄️ 아카이브":
+    st.header("🗄️ 분석 기록")
+    df = pd.read_sql_query("SELECT id, title, views, created_at FROM analyses ORDER BY id DESC", conn)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    sel_id = st.number_input("ID 입력", min_value=0)
+    if st.button("보기", use_container_width=True):
+        res = conn.execute("SELECT full_report FROM analyses WHERE id=?", (sel_id,)).fetchone()
+        if res: st.markdown(res[0])
 
-# --- [탭 3] 인사이트 & 대본 ---
-elif menu == "📈 인사이트 & 대본":
-    st.title("📈 AI 트렌드 인사이트 & 대본")
+# [탭 3] 인사이트
+elif menu == "📈 인사이트":
+    st.header("📈 트렌드 & 대본")
+    tab1, tab2 = st.tabs(["트렌드 분석", "대본 생성"])
     
-    tab1, tab2 = st.tabs(["📊 트렌드 분석", "✍️ 대본 생성"])
-    
-    # [서브탭 1] 트렌드 분석
     with tab1:
-        st.subheader("저장된 인사이트 불러오기")
-        insight_df = pd.read_sql_query("SELECT id, analyzed_count, created_at, trend_report FROM insights ORDER BY id DESC", conn)
-        
-        if not insight_df.empty:
-            st.dataframe(insight_df[['id', 'analyzed_count', 'created_at']], use_container_width=True)
-            i_id = st.number_input("인사이트 ID 조회", min_value=0)
-            if st.button("📂 인사이트 기록 열기", use_container_width=True):
-                rec = insight_df[insight_df['id'] == i_id]
-                if not rec.empty:
-                    st.markdown(rec.iloc[0]['trend_report'])
-        else:
-            st.info("저장된 트렌드 분석 기록이 없습니다.")
-            
-        st.divider()
-        st.subheader("🔥 새로운 트렌드 추출하기")
-        
-        # 분석 대상 데이터 로드
-        recent_df = pd.read_sql_query("SELECT title, full_report FROM analyses ORDER BY id DESC LIMIT 20", conn)
-        
-        if len(recent_df) < 2:
-            st.warning("분석할 데이터가 부족합니다. 최소 2개 이상의 영상을 먼저 분석해주세요.")
-        else:
-            if st.button(f"🚀 최근 {len(recent_df)}개 영상으로 트렌드 분석 시작", use_container_width=True):
-                with st.spinner("AI가 성공 패턴을 도출하고 있습니다..."):
-                    try:
-                        combined_text = "\n".join([f"[{row['title']}]\n{row['full_report']}" for i, row in recent_df.iterrows()])
-                        
-                        trend_prompt = f"""
-                        최근 분석한 {len(recent_df)}개의 바이럴 영상 리포트들을 종합하여 '현재의 성공 법칙'을 도출해줘.
-                        
-                        [분석 요청 사항]
-                        1. 🔑 **공통적으로 사용된 소재/키워드**
-                        2. 🎣 **초반 3초 훅(Hook)의 공통 패턴**
-                        3. 😂 **시청자 감정 코드 (Dopamine Point)**
-                        4. 🚀 **실행 가능한 액션 플랜 3가지**
-                        
-                        [데이터]
-                        {combined_text}
-                        """
-                        
-                        genai.configure(api_key=api_key_input)
-                        model = genai.GenerativeModel('gemini-2.5-flash')
-                        res = model.generate_content(trend_prompt)
-                        
-                        # DB 저장
-                        c = conn.cursor()
-                        c.execute("INSERT INTO insights (analyzed_count, trend_report, created_at) VALUES (?, ?, ?)",
-                                 (len(recent_df), res.text, datetime.now()))
-                        conn.commit()
-                        
-                        st.success("분석 완료! DB에 저장되었습니다.")
-                        st.markdown(res.text)
-                        
-                    except Exception as e:
-                        st.error(f"오류 발생: {e}")
-
-    # [서브탭 2] 대본 생성
-    with tab2:
-        st.subheader("✨ 트렌드 반영 대본 작가")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            topic = st.text_input("주제 (예: 자취생 요리, 헬스장 공감)")
-        with col2:
-            tone = st.selectbox("톤앤매너", ["유머러스/B급", "감동/진지", "정보전달/깔끔", "반말/친구처럼"])
-            
-        add_req = st.text_area("추가 요청사항 (디테일한 요구를 적어주세요)", placeholder="예: 마지막에 반전을 넣어줘, 유행어를 섞어줘", height=100)
-        
-        if st.button("✍️ 대본 생성하기", use_container_width=True):
-            if not topic:
-                st.warning("주제를 입력해주세요.")
+        df = pd.read_sql_query("SELECT title, full_report FROM analyses ORDER BY id DESC LIMIT 20", conn)
+        if st.button("🚀 트렌드 분석", use_container_width=True):
+            if len(df) < 2: st.warning("데이터 부족")
             else:
-                with st.spinner("천만 작가가 대본을 쓰고 있습니다..."):
-                    try:
-                        # DB에서 최신 인사이트 가져오기 (없으면 생략)
-                        insight_context = ""
-                        last_insight = pd.read_sql_query("SELECT trend_report FROM insights ORDER BY id DESC LIMIT 1", conn)
-                        if not last_insight.empty:
-                            insight_context = f"[참고할 최신 트렌드 분석]\n{last_insight.iloc[0]['trend_report']}\n"
-                        
-                        script_prompt = f"""
-                        너는 천만 유튜브 채널의 메인 작가야.
-                        아래의 최신 트렌드와 요청사항을 반영하여 40초~50초 분량의 쇼츠 대본을 작성해줘.
-                        
-                        {insight_context}
-                        
-                        [요청사항]
-                        - 주제: {topic}
-                        - 톤앤매너: {tone}
-                        - 추가요청: {add_req}
-                        
-                        [필수 구조]
-                        1. **제목 & 썸네일 카피 추천**
-                        2. **[0~3초] 도입부 (Hook):** 시각적 지시문과 대사 필수 (이탈 방지)
-                        3. **[본론] 전개:** 빠른 템포, 컷 전환 지시 포함
-                        4. **[결말] 마무리:** 반전 요소 또는 댓글 유도 질문
-                        """
-                        
-                        genai.configure(api_key=api_key_input)
-                        model = genai.GenerativeModel('gemini-2.5-flash')
-                        script_res = model.generate_content(script_prompt)
-                        
-                        st.markdown(script_res.text)
-                        
-                    except Exception as e:
-                        st.error(f"오류 발생: {e}")
+                with st.spinner("분석 중..."):
+                    combined = "\n".join([f"[{r['title']}]\n{r['full_report']}" for i, r in df.iterrows()])
+                    prompt = f"이 영상들의 성공 법칙을 분석해줘.\n{combined}"
+                    genai.configure(api_key=api_key_input)
+                    res = genai.GenerativeModel('gemini-2.5-flash').generate_content(prompt)
+                    
+                    c = conn.cursor()
+                    c.execute("INSERT INTO insights (analyzed_count, trend_report, created_at) VALUES (?,?,?)", (len(df), res.text, datetime.now()))
+                    conn.commit()
+                    st.markdown(res.text)
 
-
-
+    with tab2:
+        topic = st.text_input("주제")
+        req = st.text_area("요청사항")
+        if st.button("✍️ 대본 생성", use_container_width=True):
+            with st.spinner("작성 중..."):
+                genai.configure(api_key=api_key_input)
+                # 최신 인사이트 반영
+                insight = ""
+                last = pd.read_sql_query("SELECT trend_report FROM insights ORDER BY id DESC LIMIT 1", conn)
+                if not last.empty: insight = last.iloc[0]['trend_report']
+                
+                prompt = f"주제: {topic}\n요청: {req}\n트렌드참고:\n{insight}\n쇼츠 대본 써줘."
+                res = genai.GenerativeModel('gemini-2.5-flash').generate_content(prompt)
+                st.markdown(res.text)
