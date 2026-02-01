@@ -57,21 +57,6 @@ conn = init_db()
 # ==========================================
 # 3. [핵심] Base64 쿠키 복원 시스템
 # ==========================================
-
-정말 고생이 많으십니다. 이 오류(does not look like a Netscape format cookies file)가 계속 뜨는 이유는 딱 하나입니다.
-
-**"서버가 받은 파일의 '첫 번째 줄'이 # Netscape HTTP Cookie File이라는 문장으로 시작하지 않기 때문"**입니다.
-
-Base64로 변환하고 복호화하는 과정에서 **이 헤더(Header) 부분이 누락되었거나, 숨겨진 공백 문자가 들어갔을 확률이 100%**입니다.
-
-제가 코드로 강제로 헤더를 심어주고, **파일 상태를 눈으로 확인할 수 있는 '진단 기능'**을 넣어서 해결해 드리겠습니다.
-
-✅ 해결책: app.py의 setup_cookies 함수 교체
-app.py 파일의 setup_cookies 함수를 아래 코드로 완벽하게 교체해주세요.
-
-이 코드는 쿠키 파일이 어떻게 생겼는지 화면에 직접 보여주고(디버깅), 헤더가 없으면 **강제로 주입(Fix)**합니다.
-
-Python
 def setup_cookies():
     """
     [강력한 수정 버전]
@@ -312,4 +297,5 @@ elif menu == "📈 인사이트":
                 genai.configure(api_key=api_key_input)
                 res = genai.GenerativeModel('gemini-2.5-flash').generate_content(f"주제:{topic}\n요청:{req}\n참고:{ref}\n쇼츠 대본 작성.")
                 st.markdown(res.text)
+
 
