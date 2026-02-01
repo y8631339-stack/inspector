@@ -76,24 +76,24 @@ def setup_cookies():
 # 4. 영상 다운로드
 # ==========================================
 
+죄송합니다. 복사해서 붙여넣는 과정에서 **들여쓰기(띄어쓰기 공백)**가 어긋나서 생긴 에러입니다. 파이썬은 띄어쓰기 칸 수가 안 맞으면 아예 실행이 안 됩니다.
+
+부분만 수정하지 마시고, 아래 코드를 복사해서 get_video_data 함수 전체를 통째로 덮어씌워주세요.
+
+기존의 def get_video_data(url): 부터 return {'error': ...} 까지 싹 지우고, 그 자리에 아래 코드를 정확히 붙여넣으시면 됩니다.
+
+Python
 def get_video_data(url):
     # 쿠키 생성
     setup_cookies()
-ydl_opts = {
-        # [수정] 무조건 합치기 과정 없는(ffmpeg 안 쓰는) 단일 파일(mp4) 우선 다운로드
+    
+    ydl_opts = {
+        # [수정] ffmpeg 없이도 재생 가능한 단일 파일(mp4) 우선 다운로드
         'format': 'best[ext=mp4]/best', 
-        
         'outtmpl': 'temp_video.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        
-        # [수정] 안드로이드 위장 기능 잠시 주석 처리 (호환성 문제 방지)
-        # 'extractor_args': {
-        #     'youtube': {
-        #         'player_client': ['android'],
-        #     }
-        # }
     }
 
     # 쿠키 파일 적용
@@ -267,6 +267,7 @@ elif menu == "📈 인사이트":
                 genai.configure(api_key=api_key_input)
                 res = genai.GenerativeModel('gemini-2.5-flash').generate_content(f"주제:{topic}\n요청:{req}\n참고:{ref}\n쇼츠 대본 작성.")
                 st.markdown(res.text)
+
 
 
 
