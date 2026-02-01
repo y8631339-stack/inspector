@@ -81,27 +81,32 @@ def get_video_data(url):
     setup_cookies()
     
     ydl_opts = {
-        'format': 'best',
+        'format': 'best', # 화질 선택
         'outtmpl': 'temp_video.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'extractor_args': {'youtube': {'player_client': ['web', 'android', 'ios']}}
+        
+        # [핵심 수정] PC가 아닌 '안드로이드 앱'으로 완벽 위장
+        # 모바일 API는 IP 주소가 바뀌어도 차단을 잘 안 합니다.
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android'],
+            }
+        }
     }
 
-    # 쿠키 파일 적용 확인
+    # 쿠키 파일 적용
     if os.path.exists('cookies.txt'):
         ydl_opts['cookiefile'] = 'cookies.txt'
-    else:
-        # 파일이 없으면 강제로 빈 파일이라도 생성 (에러 메시지 확인용)
-        st.error("쿠키 파일이 생성되지 않았습니다.")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # 다운로드 실행
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # 파일 찾기
+            # 파일 찾기 (확장자 유연하게)
             if not os.path.exists(filename):
                 base, _ = os.path.splitext(filename)
                 for ext in ['.mp4', '.mkv', '.webm', '.3gp']:
@@ -127,10 +132,8 @@ def get_video_data(url):
 
     except Exception as e:
         err_msg = str(e)
-        if "Netscape" in err_msg:
-             return {'error': "🚫 Secrets에 붙여넣은 쿠키 내용이 손상되었습니다. 줄바꿈이나 띄어쓰기를 확인하세요."}
         if "403" in err_msg or "Sign in" in err_msg:
-            return {'error': "🚫 403 차단: 쿠키는 적용되었으나 만료되었거나 권한이 부족합니다. 다시 추출해주세요."}
+             return {'error': "🚫 403 차단: 유튜브가 서버 접속을 막았습니다.\n\n[해결책]\n1. 유튜브 로그아웃 -> 재로그인\n2. 쿠키 다시 추출해서 Secrets에 업데이트\n3. (중요) 쿠키 추출 후 브라우저에서 로그아웃 하지 마세요!"}
         return {'error': f"다운로드 오류: {err_msg}"}
 
 def upload_to_gemini(path):
@@ -264,3 +267,4 @@ elif menu == "📈 인사이트":
                 genai.configure(api_key=api_key_input)
                 res = genai.GenerativeModel('gemini-2.5-flash').generate_content(f"주제:{topic}\n요청:{req}\n참고:{ref}\n쇼츠 대본 작성.")
                 st.markdown(res.text)
+
