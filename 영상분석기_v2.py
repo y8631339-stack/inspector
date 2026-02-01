@@ -80,16 +80,25 @@ def get_video_data(url):
     # 쿠키 생성
     setup_cookies()
     
+    # [수정 1] 헤더 추가: 봇이 아니라 일반 크롬 브라우저인 척 위장
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+    }
+
     ydl_opts = {
-        # [수정] ffmpeg 없이도 재생 가능한 단일 파일(mp4) 우선 다운로드
+        # [수정 2] 에러가 가장 적은 '단일 파일(mp4)' 우선 포맷
         'format': 'best[ext=mp4]/best', 
         'outtmpl': 'temp_video.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
+        
+        # [핵심] 위장용 헤더 적용
+        'http_headers': headers,
     }
 
-    # 쿠키 파일 적용
+    # 쿠키 파일이 있으면 적용
     if os.path.exists('cookies.txt'):
         ydl_opts['cookiefile'] = 'cookies.txt'
 
@@ -99,7 +108,7 @@ def get_video_data(url):
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # 파일 찾기 (확장자 유연하게)
+            # 파일 이름 찾기 (확장자 유연성 확보)
             if not os.path.exists(filename):
                 base, _ = os.path.splitext(filename)
                 for ext in ['.mp4', '.mkv', '.webm', '.3gp']:
@@ -111,7 +120,7 @@ def get_video_data(url):
                         break
 
             if not os.path.exists(filename) or os.path.getsize(filename) == 0:
-                 raise Exception("파일이 생성되지 않았습니다.")
+                 raise Exception("파일 다운로드 실패 (0byte)")
 
             meta_data = {
                 'filename': filename,
@@ -125,10 +134,10 @@ def get_video_data(url):
 
     except Exception as e:
         err_msg = str(e)
+        # 403 에러가 발생하면 사용자에게 명확한 메시지 전달
         if "403" in err_msg or "Sign in" in err_msg:
-             return {'error': "🚫 403 차단: 유튜브가 서버 접속을 막았습니다.\n\n[해결책]\n1. 유튜브 로그아웃 -> 재로그인\n2. 쿠키 다시 추출해서 Secrets에 업데이트\n3. (중요) 쿠키 추출 후 브라우저에서 로그아웃 하지 마세요!"}
+             return {'error': "🚫 403 차단: 쿠키가 만료되었습니다.\n[해결] 1.시크릿창 로그인 -> 2.쿠키 재추출 -> 3.로그아웃 없이 창 닫기 -> 4.Secrets 업데이트"}
         return {'error': f"다운로드 오류: {err_msg}"}
-
 def upload_to_gemini(path):
     try:
         video_file = genai.upload_file(path=path)
@@ -260,6 +269,7 @@ elif menu == "📈 인사이트":
                 genai.configure(api_key=api_key_input)
                 res = genai.GenerativeModel('gemini-2.5-flash').generate_content(f"주제:{topic}\n요청:{req}\n참고:{ref}\n쇼츠 대본 작성.")
                 st.markdown(res.text)
+
 
 
 
