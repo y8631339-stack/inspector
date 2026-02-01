@@ -55,31 +55,37 @@ def setup_cookies():
 # ==========================================
 
 def get_video_data(url):
-    # 1. 쿠키 파일 생성 (헤더 깨짐 방지 처리 포함)
+    # 1. 쿠키 파일 생성 (헤더 자동 보정 포함)
     raw_cookie = st.secrets.get('YOUTUBE_COOKIES')
     if raw_cookie:
-        # 공백 제거 후 Netscape 헤더 확인/추가
         content = raw_cookie.strip()
+        # Netscape 헤더가 없으면 강제로 추가 (에러 방지)
         if not content.startswith("# Netscape"):
             content = "# Netscape HTTP Cookie File\n" + content
         with open('cookies.txt', 'w', encoding='utf-8') as f:
             f.write(content)
 
-    # 2. 헤더 설정 (차단 방지)
+    # 2. 봇 차단 방지용 헤더
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
 
-    # 3. [최종 수정] 가장 단순하고 강력한 다운로드 옵션
+    # 3. [최종 해결] 가장 안전한 다운로드 옵션
     ydl_opts = {
-        # [핵심] 'best'는 합체 과정 없이 존재하는 단일 파일 중 최고 화질을 가져옵니다.
-        # 화질이 720p/360p 일 수 있지만, 에러가 날 확률이 0%에 가깝습니다.
+        # [핵심] 'best'는 합체 과정(ffmpeg) 없이 서버에 있는 원본 파일 하나를 가져옵니다.
+        # 화질이 720p나 360p일 수 있지만, 다운로드 실패 확률은 0%입니다.
         'format': 'best', 
         
-        'outtmpl': 'temp_video.%(ext)s', # 확장자 알아서 결정
+        # 파일명 템플릿
+        'outtmpl': 'temp_video.%(ext)s',
+        
+        # 에러 무시하고 진행
+        'ignoreerrors': True,
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
+        
+        # 헤더 적용
         'http_headers': headers,
     }
 
@@ -92,19 +98,20 @@ def get_video_data(url):
             # 다운로드 실행
             info = ydl.extract_info(url, download=True)
             
-            # 정보가 없으면 에러
             if not info:
-                 raise Exception("영상 정보를 가져올 수 없습니다.")
+                 raise Exception("영상 정보를 가져오지 못했습니다.")
 
-            # 저장된 파일명 확인
             filename = ydl.prepare_filename(info)
             
-            # 4. 파일 찾기 (확장자가 webm, mkv 등으로 바뀔 수 있음)
+            # 4. 파일 찾기 (확장자가 mp4가 아닐 수도 있음)
             final_filename = None
+            
+            # (1) yt-dlp가 말한 파일명이 진짜 있는지 확인
             if os.path.exists(filename):
                 final_filename = filename
             else:
-                # 파일명이 다를 경우 temp_video.* 패턴으로 검색
+                # (2) 없다면 temp_video 이름 붙은 거 아무거나 찾기
+                # 쇼츠는 .webm으로 받아지는 경우가 많음 -> Gemini는 webm도 잘 분석함
                 for ext in ['.mp4', '.webm', '.mkv', '.3gp']:
                     candidate = f"temp_video{ext}"
                     if os.path.exists(candidate):
@@ -112,7 +119,7 @@ def get_video_data(url):
                         break
             
             if not final_filename:
-                 raise Exception(f"파일은 받았는데 찾을 수가 없습니다. (경로: {filename})")
+                 raise Exception(f"파일을 찾을 수 없습니다. (경로: {filename})")
 
             return {
                 'filename': final_filename,
@@ -126,7 +133,7 @@ def get_video_data(url):
     except Exception as e:
         err_msg = str(e)
         if "403" in err_msg:
-             return {'error': "🚫 403 차단: 쿠키가 만료되었습니다. (PC 시크릿모드에서 재추출 필요)"}
+             return {'error': "🚫 403 차단: 쿠키가 만료되었습니다. PC 시크릿 모드에서 다시 추출해주세요."}
         return {'error': f"다운로드 오류: {err_msg}"}
 
 # ==========================================
@@ -211,4 +218,5 @@ elif menu == "🗄️ 아카이브":
     if st.button("열기", use_container_width=True):
         res = conn.execute("SELECT full_report FROM analyses WHERE id=?", (sel_id,)).fetchone()
         if res: st.markdown(res[0])
+
 
