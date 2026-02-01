@@ -79,22 +79,21 @@ def setup_cookies():
 def get_video_data(url):
     # 쿠키 생성
     setup_cookies()
-    ydl_opts = {
-        # [수정] 'best' 대신 비디오+오디오 결합 허용
-        'format': 'bestvideo+bestaudio/best', 
-        'merge_output_format': 'mp4', # 최종 결과물을 mp4로 고정
+ydl_opts = {
+        # [수정] 무조건 합치기 과정 없는(ffmpeg 안 쓰는) 단일 파일(mp4) 우선 다운로드
+        'format': 'best[ext=mp4]/best', 
         
         'outtmpl': 'temp_video.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         
-        # [핵심 수정] PC가 아닌 '안드로이드 앱'으로 완벽 위장
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android'],
-            }
-        }
+        # [수정] 안드로이드 위장 기능 잠시 주석 처리 (호환성 문제 방지)
+        # 'extractor_args': {
+        #     'youtube': {
+        #         'player_client': ['android'],
+        #     }
+        # }
     }
 
     # 쿠키 파일 적용
@@ -268,5 +267,6 @@ elif menu == "📈 인사이트":
                 genai.configure(api_key=api_key_input)
                 res = genai.GenerativeModel('gemini-2.5-flash').generate_content(f"주제:{topic}\n요청:{req}\n참고:{ref}\n쇼츠 대본 작성.")
                 st.markdown(res.text)
+
 
 
