@@ -55,72 +55,79 @@ def setup_cookies():
 # ==========================================
 
 def get_video_data(url):
-    setup_cookies() # 쿠키 생성
-    
+    # 1. 쿠키 파일 생성 (헤더 깨짐 방지 처리 포함)
+    raw_cookie = st.secrets.get('YOUTUBE_COOKIES')
+    if raw_cookie:
+        # 공백 제거 후 Netscape 헤더 확인/추가
+        content = raw_cookie.strip()
+        if not content.startswith("# Netscape"):
+            content = "# Netscape HTTP Cookie File\n" + content
+        with open('cookies.txt', 'w', encoding='utf-8') as f:
+            f.write(content)
+
+    # 2. 헤더 설정 (차단 방지)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    }
+
+    # 3. [최종 수정] 가장 단순하고 강력한 다운로드 옵션
     ydl_opts = {
-        # [핵심] 합치기 시도하되, 없으면 단일파일 사용 (로컬 코드 로직 유지)
-        'format': 'bestvideo+bestaudio/best', 
-        'outtmpl': 'temp_video.%(ext)s',
+        # [핵심] 'best'는 합체 과정 없이 존재하는 단일 파일 중 최고 화질을 가져옵니다.
+        # 화질이 720p/360p 일 수 있지만, 에러가 날 확률이 0%에 가깝습니다.
+        'format': 'best', 
+        
+        'outtmpl': 'temp_video.%(ext)s', # 확장자 알아서 결정
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        
-        # [로컬 코드의 장점] 안드로이드 위장
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web'],
-            }
-        },
-        'merge_output_format': 'mp4',
+        'http_headers': headers,
     }
-    
-    # 쿠키가 있으면 적용 (클라우드 환경 필수)
+
+    # 쿠키 적용
     if os.path.exists('cookies.txt'):
         ydl_opts['cookiefile'] = 'cookies.txt'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # 다운로드 실행
             info = ydl.extract_info(url, download=True)
+            
+            # 정보가 없으면 에러
+            if not info:
+                 raise Exception("영상 정보를 가져올 수 없습니다.")
+
+            # 저장된 파일명 확인
             filename = ydl.prepare_filename(info)
             
-            # [로컬 코드의 장점] 파일 찾기 로직 (확장자 유연 대응)
+            # 4. 파일 찾기 (확장자가 webm, mkv 등으로 바뀔 수 있음)
             final_filename = None
             if os.path.exists(filename):
                 final_filename = filename
             else:
-                # 파일명이 다를 경우를 대비한 탐색
-                base_name = os.path.splitext('temp_video')[0]
-                for ext in ['.mp4', '.mkv', '.webm', '.3gp']:
-                    if os.path.exists(base_name + ext):
-                        final_filename = base_name + ext
+                # 파일명이 다를 경우 temp_video.* 패턴으로 검색
+                for ext in ['.mp4', '.webm', '.mkv', '.3gp']:
+                    candidate = f"temp_video{ext}"
+                    if os.path.exists(candidate):
+                        final_filename = candidate
                         break
             
-            if not final_filename or os.path.getsize(final_filename) == 0:
-                 raise Exception("다운로드 실패 (파일 없음)")
+            if not final_filename:
+                 raise Exception(f"파일은 받았는데 찾을 수가 없습니다. (경로: {filename})")
 
-            meta_data = {
+            return {
                 'filename': final_filename,
-                'title': info.get('title', 'Unknown'),
-                'channel': info.get('uploader', 'Unknown'),
+                'title': info.get('title', '제목 없음'),
+                'channel': info.get('uploader', '채널명 없음'),
                 'views': info.get('view_count', 0),
-                'date': info.get('upload_date', 'Unknown'),
-                'desc': info.get('description', '')[:500]
+                'date': info.get('upload_date', '날짜 모름'),
+                'desc': info.get('description', '')[:300]
             }
-            return meta_data
-            
-    except Exception as e:
-        # 클라우드에서 자주 발생하는 403 에러 안내 추가
-        if "403" in str(e):
-             return {'error': "🚫 403 차단됨: Secrets에 최신 쿠키값을 업데이트해주세요."}
-        return {'error': str(e)}
 
-def upload_to_gemini(path):
-    video_file = genai.upload_file(path=path)
-    while video_file.state.name == "PROCESSING":
-        time.sleep(1)
-        video_file = genai.get_file(video_file.name)
-    if video_file.state.name == "FAILED": raise ValueError("Gemini 처리 실패")
-    return video_file
+    except Exception as e:
+        err_msg = str(e)
+        if "403" in err_msg:
+             return {'error': "🚫 403 차단: 쿠키가 만료되었습니다. (PC 시크릿모드에서 재추출 필요)"}
+        return {'error': f"다운로드 오류: {err_msg}"}
 
 # ==========================================
 # 3. AI 및 UI
@@ -204,3 +211,4 @@ elif menu == "🗄️ 아카이브":
     if st.button("열기", use_container_width=True):
         res = conn.execute("SELECT full_report FROM analyses WHERE id=?", (sel_id,)).fetchone()
         if res: st.markdown(res[0])
+
