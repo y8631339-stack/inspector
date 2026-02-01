@@ -78,11 +78,12 @@ def setup_cookies():
             decoded_bytes = base64.b64decode(b64_cookie)
             with open(cookie_filename, 'wb') as f:
                 f.write(decoded_bytes)
-            print("✅ 쿠키 파일 복원 성공!")
+            # print("✅ 쿠키 파일 복원 성공!") # 디버깅용
         except Exception as e:
             st.error(f"🍪 쿠키 복원 실패: {e}")
     else:
-        print("⚠️ Secrets에 'YOUTUBE_COOKIES_B64'가 없습니다.")
+        # Secrets가 없을 경우 경고 (로컬 실행 시 무시 가능)
+        pass
 
 # ==========================================
 # 4. 영상 다운로드 (쿠키 적용)
