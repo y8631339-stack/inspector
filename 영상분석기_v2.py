@@ -77,78 +77,79 @@ def setup_cookies():
 # ==========================================
 
 def get_video_data(url):
-    # 쿠키 생성
+    # 1. 쿠키 설정 확인
     setup_cookies()
     
-    # 봇 차단 방지용 헤더
+    # 2. 헤더 설정 (사람인 척 위장)
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
     }
 
+    # 3. 다운로드 옵션 (가장 안전한 설정)
     ydl_opts = {
-        # [핵심 수정] mp4 강제 제거 -> 확장자 상관없이 '최고 화질' 선택
-        # "합쳐진 파일(best)"이 없으면 "따로 받아서 합치기(bestvideo+bestaudio)" 시도
-        'format': 'best/bestvideo+bestaudio', 
+        # 화질/확장자 따지지 않고 '다운로드 가능한 최고 파일' 선택
+        'format': 'best/bestvideo+bestaudio',
         
-        # 합쳐야 할 경우(ffmpeg 사용 시) 최종 결과물만 mp4로 변환 (선택 사항)
-        # 만약 ffmpeg가 꼬였다면 이 옵션은 무시되고 원본 확장자(webm 등)로 받아집니다.
-        'merge_output_format': 'mp4',
+        # 임시 파일명 고정
+        'outtmpl': 'temp_video.%(ext)s',
         
-        'outtmpl': 'temp_video.%(ext)s', # 파일명 고정
+        # 자질구레한 경고 무시
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
+        
+        # 위장 헤더 적용
         'http_headers': headers,
     }
 
-    # 쿠키 파일 적용
+    # 쿠키 파일이 물리적으로 존재하면 적용
     if os.path.exists('cookies.txt'):
         ydl_opts['cookiefile'] = 'cookies.txt'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # 다운로드 실행
+            # 메타데이터 추출 및 다운로드
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # [수정] 파일 찾기 로직 강화 (webm, mkv 등 모든 확장자 탐색)
+            # 4. 파일 찾기 (어떤 확장자로 받아졌든 찾아냄)
             final_filename = None
             
-            # 1. yt-dlp가 예고한 파일명이 실제로 있는지 확인
+            # (1) yt-dlp가 알려준 파일명이 진짜 있는지 확인
             if os.path.exists(filename):
                 final_filename = filename
-            
-            # 2. 없다면 temp_video.* 패턴으로 검색 (확장자가 바뀌었을 경우 대비)
             else:
-                base_name = os.path.splitext('temp_video')[0] # 그냥 'temp_video'
-                possible_exts = ['.mp4', '.webm', '.mkv', '.3gp', '.m4a']
-                
-                for ext in possible_exts:
-                    # temp_video.mp4, temp_video.webm 등 확인
-                    candidate = f"temp_video{ext}" 
-                    if os.path.exists(candidate):
-                        final_filename = candidate
+                # (2) 없다면 temp_video 이름으로 된 모든 파일 뒤지기
+                for ext in ['.mp4', '.webm', '.mkv', '.3gp', '.m4a']:
+                    if os.path.exists(f"temp_video{ext}"):
+                        final_filename = f"temp_video{ext}"
                         break
+            
+            # 끝까지 못 찾으면 에러 처리
+            if not final_filename:
+                 raise Exception(f"파일 다운로드 실패 (경로 못 찾음: {filename})")
 
-            if not final_filename or os.path.getsize(final_filename) == 0:
-                 raise Exception(f"파일을 찾을 수 없습니다. (예상 파일명: {filename})")
-
-            meta_data = {
+            # 성공 데이터 반환
+            return {
                 'filename': final_filename,
-                'title': info.get('title', 'Unknown Title'),
-                'channel': info.get('uploader', 'Unknown Channel'),
+                'title': info.get('title', '제목 없음'),
+                'channel': info.get('uploader', '채널명 없음'),
                 'views': info.get('view_count', 0),
-                'date': info.get('upload_date', 'Unknown'),
+                'date': info.get('upload_date', '날짜 모름'),
                 'desc': info.get('description', '')[:300]
             }
-            return meta_data
 
     except Exception as e:
+        # 에러 메시지를 문자열로 변환
         err_msg = str(e)
+        
+        # 403 에러가 또 뜨면 사용자에게 알림
         if "403" in err_msg or "Sign in" in err_msg:
-             return {'error': "🚫 403 차단: 쿠키 만료. 시크릿 모드에서 재추출 필요."}
-        return {'error': f"다운로드 오류: {err_msg}"}
+             return {'error': "🚫 유튜브가 차단했습니다. (403 Forbidden)\n[해결] PC에서 다시 쿠키를 추출해야 합니다."}
+        
+        # 기타 에러 반환
+        return {'error': f"⚠️ 다운로드 에러 발생: {err_msg}"}
 # ==========================================
 # 5. AI 분석 및 UI
 # ==========================================
@@ -270,6 +271,7 @@ elif menu == "📈 인사이트":
                 genai.configure(api_key=api_key_input)
                 res = genai.GenerativeModel('gemini-2.5-flash').generate_content(f"주제:{topic}\n요청:{req}\n참고:{ref}\n쇼츠 대본 작성.")
                 st.markdown(res.text)
+
 
 
 
