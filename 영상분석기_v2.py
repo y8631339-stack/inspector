@@ -80,16 +80,19 @@ def save_api_key(key):
 
 def get_video_data(url):
     """
-    yt-dlp: 쿠키(cookies.txt)를 우선 사용하여 403/Sign-in 오류 해결
+    yt-dlp 개선판:
+    1. 쿠키 자동 적용 (403 해결)
+    2. 포맷 제약 해제 (Format not available 해결 -> 'best' 사용)
     """
     # 1. 기본 설정
     ydl_opts = {
-        'format': 'best[ext=mp4]/best',
+        # [수정됨] 무조건 mp4를 고집하지 않고, 다운로드 가능한 '최고 화질'을 선택
+        'format': 'best', 
         'outtmpl': 'temp_video.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        # 중요: 브라우저처럼 보이게 하는 헤더 설정
+        # 브라우저 위장 (403 방지)
         'extractor_args': {
             'youtube': {
                 'player_client': ['web', 'android', 'ios'],
@@ -97,30 +100,28 @@ def get_video_data(url):
         }
     }
 
-    # 2. [핵심] 폴더에 cookies.txt가 있으면 적용 (이게 신분증 역할)
+    # 2. 쿠키 파일 적용 (있으면 사용)
     if os.path.exists('cookies.txt'):
         ydl_opts['cookiefile'] = 'cookies.txt'
-    else:
-        # 쿠키가 없으면 경고 출력 (스트림릿 로그용)
-        print("⚠️ 주의: cookies.txt 파일이 없습니다. 다운로드가 차단될 수 있습니다.")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # 다운로드 시도
+            # 다운로드
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # 파일명 보정 (확장자 매칭)
+            # 파일명 보정 (확장자 유연하게 찾기)
+            # yt-dlp가 .webm이나 .mkv로 받았을 경우를 대비해 실제 파일을 찾습니다.
             if not os.path.exists(filename):
                 base, _ = os.path.splitext(filename)
-                for ext in ['.mp4', '.mkv', '.webm']:
+                for ext in ['.mp4', '.mkv', '.webm', '.3gp']:
                     if os.path.exists(base + ext):
                         filename = base + ext
                         break
             
-            # 파일이 없거나 0바이트면 실패로 간주
+            # 검증
             if not os.path.exists(filename) or os.path.getsize(filename) == 0:
-                 raise Exception("파일이 생성되지 않았거나 비어있습니다.")
+                 raise Exception("파일이 다운로드되지 않았습니다. (쿠키 파일 확인 필요)")
 
             meta_data = {
                 'filename': filename,
@@ -134,9 +135,8 @@ def get_video_data(url):
 
     except Exception as e:
         err_msg = str(e)
-        # 사용자에게 명확한 해결책 안내
-        if "Sign in" in err_msg or "403" in err_msg or "bot" in err_msg:
-            return {'error': "🚫 유튜브가 봇 접근을 감지했습니다.\n\n[해결 방법]\n1. 'Get cookies.txt LOCALLY' 크롬 확장프로그램 설치\n2. 유튜브 접속 후 쿠키 다운로드\n3. 파일명을 cookies.txt로 변경하여 app.py와 같은 폴더에 넣기\n4. 다시 시도하세요!"}
+        if "Sign in" in err_msg or "403" in err_msg:
+             return {'error': "🚫 유튜브 접근 차단됨 (cookies.txt 필요)"}
         return {'error': f"다운로드 오류: {err_msg}"}
 
 def upload_to_gemini(path):
@@ -419,4 +419,5 @@ elif menu == "📈 인사이트 & 대본":
                         
                     except Exception as e:
                         st.error(f"오류 발생: {e}")
+
 
